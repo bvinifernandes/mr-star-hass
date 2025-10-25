@@ -64,6 +64,7 @@ class MrStarLightEntity(LightEntity, CoordinatorEntity, RestoreEntity):
         self._id = entity_id
         self._coordinator = coordinator
         self._attr_name = f"Garland {entity_id} Light"
+        self._attr_unique_id = self._attr_name
         self._available = False
         super().__init__(coordinator)
 
