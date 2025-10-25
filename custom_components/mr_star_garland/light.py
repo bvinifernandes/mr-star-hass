@@ -150,13 +150,12 @@ class MrStarLightEntity(LightEntity, CoordinatorEntity, RestoreEntity):
             return
 
         state_attributes = {}
-        if ATTR_BRIGHTNESS in state.attributes:
-            self._brightness = int(state.attributes[ATTR_BRIGHTNESS] or self._brightness)
-            state_attributes[ATTR_BRIGHTNESS] = self._brightness
-        if ATTR_HS_COLOR in state.attributes:
-            self._rgb = color_util.color_hs_to_RGB(*(state.attributes[ATTR_HS_COLOR] or self._rgb))
-        if ATTR_EFFECT in state.attributes:
-            self._attr_effect = state.attributes[ATTR_EFFECT] or self._attr_effect
+        if ATTR_BRIGHTNESS in state.attributes and state.attributes[ATTR_BRIGHTNESS]:
+            self._brightness = int(state.attributes[ATTR_BRIGHTNESS])
+        if ATTR_HS_COLOR in state.attributes and state.attributes[ATTR_HS_COLOR]:
+            self._rgb = color_util.color_hs_to_RGB(*state.attributes[ATTR_HS_COLOR])
+        if ATTR_EFFECT in state.attributes and state.attributes[ATTR_EFFECT]:
+            self._attr_effect = state.attributes[ATTR_EFFECT]
         initialize: CoroutineType
         if state.state == "on":
             self._is_on = True
