@@ -56,6 +56,7 @@ class MrStarLightEntity(LightEntity, CoordinatorEntity, RestoreEntity):
     _attr_effect_list = EFFECT_LIST
     _attr_effect = EFFECT_LIST[0]
     _attr_name: str
+    _attr_unique_id: str
     _available: bool
     _coordinator: MrStarCoordinator
 
