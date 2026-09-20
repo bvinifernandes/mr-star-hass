@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.1.1
+
+### Fixed
+
+- A failed connection left the entities reporting themselves available. State
+  was published only after a successful connect, so once a session had been up
+  the light kept looking controllable after the garland went out of range, and
+  every command raised instead of the device showing as unreachable. Through
+  the HomeKit bridge that meant a light that looked fine in Apple Home,
+  accepted a tap and did nothing. The outcome of every connection attempt is
+  now published. The intentional session recycle stays invisible, because
+  nothing is published between dropping the old session and opening the new
+  one.
+
+### Confirmed
+
+- Colour control verified on hardware after the 2.1.0 protocol corrections:
+  solid red and solid purple both render correctly on the garland.
+
 ## 2.1.0
 
 Protocol corrections taken from the vendor Android app, com.frok.mrstar 1.0.0.

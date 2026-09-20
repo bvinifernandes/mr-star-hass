@@ -177,7 +177,24 @@ class MrStarCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return True
 
     async def _async_connect(self) -> bool:
-        """Establish a session. Returns True on success."""
+        """Establish a session and publish the outcome.
+
+        The outcome is published whether or not the attempt succeeded. A
+        failed attempt has to reach the entities, otherwise they keep
+        reporting themselves available on the strength of a session that is
+        gone and every command raises instead of the device showing as
+        unreachable.
+
+        The intentional TTL recycle stays invisible: nothing is published
+        between dropping the old session and opening the new one, so a
+        recycle that succeeds publishes the same state it started from.
+        """
+        connected = await self._async_open_session()
+        self._publish_state()
+        return connected
+
+    async def _async_open_session(self) -> bool:
+        """Open a session. Returns True on success. Publishes nothing."""
         async with self._lock:
             await self._async_disconnect_locked()
             ble_device = bluetooth.async_ble_device_from_address(
@@ -212,7 +229,6 @@ class MrStarCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._writer = PacedWriter(self._client, self.logger)
             self._connected.set()
             self.logger.debug("Connected to garland %s", self._address)
-        self._publish_state()
         return True
 
     async def _async_disconnect(self) -> None:

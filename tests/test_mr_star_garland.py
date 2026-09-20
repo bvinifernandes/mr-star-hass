@@ -244,6 +244,34 @@ def test_mode_is_recorded_for_restore():
 
 
 @pytest.mark.asyncio
+async def test_a_failed_connection_marks_the_light_unavailable(monkeypatch):
+    """A lost device has to reach the entities.
+
+    Connection state was only published after a successful connect, so once a
+    session was up the entities kept reporting themselves available even after
+    the garland went out of range. Every command then raised instead of the
+    device showing as unreachable, which in the HomeKit bridge means a light
+    that looks fine, accepts a tap and does nothing.
+    """
+    monkeypatch.setattr(
+        coordinator_module.bluetooth,
+        "async_ble_device_from_address",
+        lambda hass, address, connectable=True: None,
+    )
+
+    coordinator = _bare_coordinator()
+    lamp = MrStarLightEntity(_fake_entry(coordinator))
+
+    # A session that was up a moment ago.
+    coordinator.data = {"connected": True}
+    assert lamp.available is True
+
+    assert await coordinator._async_connect() is False
+    assert coordinator.data == {"connected": False}
+    assert lamp.available is False
+
+
+@pytest.mark.asyncio
 async def test_stop_returns_while_the_garland_is_unreachable(monkeypatch):
     """Unloading must not block on a device that cannot be connected to.
 
