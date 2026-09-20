@@ -1,167 +1,166 @@
-"""MyrtDesk light integration"""
-from types import CoroutineType
+"""Light platform for MR Star garlands."""
+
+from __future__ import annotations
+
 from typing import Any
 
-import homeassistant.util.color as color_util
-from homeassistant import config_entries, core
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_EFFECT,
     ATTR_HS_COLOR,
-    COLOR_MODE_HS,
     ColorMode,
     LightEntity,
     LightEntityFeature,
 )
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from mr_star_ble import Effect
 
-from .const import DOMAIN
-from .coordinator import MrStarCoordinator
+from . import MrStarConfigEntry
+from .entity import MrStarEntity
 
-EFFECTS_MAPPING = {
+# Names kept from the original integration so existing automations and
+# scenes that select an effect by name keep working.
+LEGACY_EFFECT_NAMES: dict[str, Effect] = {
     "Automatic Loop": Effect.AUTOMATIC_LOOP,
     "Symphony": Effect.SYMPHONY,
     "Fluttering": Effect.COLORFUL_FLUTTERING,
     "Open & Close": Effect.RAINBOW_OPEN_CLOSE,
     "Light & Dark Transition": Effect.RAINBOW_LIGHT_DARK_TRANSITION,
-    "Flowing Water": Effect.RAINBOW_FLOWING_WATER
+    "Flowing Water": Effect.RAINBOW_FLOWING_WATER,
 }
 
-EFFECT_LIST = list(EFFECTS_MAPPING.keys())
-EFFECT_LIST.sort()
+_VOWELS = frozenset("aeiou")
+
+
+def _humanize(effect: Effect) -> str:
+    """Turn an enum member name into a readable effect name.
+
+    Colour-code abbreviations such as RGB or YCP have no vowels, so they
+    are kept upper case instead of being title cased into "Rgb".
+    """
+    words = []
+    for word in effect.name.split("_"):
+        if not _VOWELS & set(word.lower()):
+            words.append(word.upper())
+        else:
+            words.append(word.capitalize())
+    return " ".join(words)
+
+
+def _build_effects() -> dict[str, Effect]:
+    """Return every effect the device supports, keyed by display name."""
+    effects = dict(LEGACY_EFFECT_NAMES)
+    known = set(LEGACY_EFFECT_NAMES.values())
+    for effect in Effect:
+        if effect in known:
+            continue
+        effects[_humanize(effect)] = effect
+    return effects
+
+
+EFFECTS: dict[str, Effect] = _build_effects()
+EFFECT_LIST: list[str] = sorted(EFFECTS)
+
 
 async def async_setup_entry(
-    hass: core.HomeAssistant,
-    config_entry: config_entries.ConfigEntry,
-    async_add_entities,
-):
-    """Set up desk light."""
-    data = hass.data[DOMAIN][config_entry.entry_id]
-    async_add_entities([MrStarLightEntity(
-        data["coordinator"],
-        data["info"],
-        data["id"]
-    )])
+    hass: HomeAssistant,  # pylint: disable=unused-argument
+    entry: MrStarConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
+    """Set up the garland light."""
+    async_add_entities([MrStarLightEntity(entry)])
 
-class MrStarLightEntity(LightEntity, CoordinatorEntity, RestoreEntity):
-    """MyrtDesk backlight entity"""
-    _is_on: bool = False
-    _rgb: tuple[int, int, int] = (255, 255, 255)
-    _brightness: int = 255
+
+class MrStarLightEntity(MrStarEntity, LightEntity, RestoreEntity):
+    """The garland itself, as a light."""
+
+    _attr_name = "Light"
+    _attr_icon = "mdi:led-strip-variant"
+    _attr_color_mode = ColorMode.HS
+    _attr_supported_color_modes = {ColorMode.HS}
     _attr_supported_features = LightEntityFeature.EFFECT
-    _attr_supported_color_modes = {ColorMode.XY, ColorMode.BRIGHTNESS}
     _attr_effect_list = EFFECT_LIST
-    _attr_effect = EFFECT_LIST[0]
-    _attr_name: str
-    _attr_unique_id: str
-    _available: bool
-    _coordinator: MrStarCoordinator
 
-    def __init__(self, coordinator: MrStarCoordinator, info, entity_id: str):
-        self._info = info
-        self._id = entity_id
-        self._coordinator = coordinator
-        self._attr_name = f"Garland {entity_id} Light"
-        self._attr_unique_id = self._attr_name
-        self._available = False
-        super().__init__(coordinator)
-
-    @property
-    def device_info(self):
-        return self._info
-
-    @property
-    def available(self) -> bool:
-        return self._available
-
-    @property
-    def icon(self):
-        return "mdi:led-strip-variant"
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        self._available = self.coordinator.data["connected"]
-        self.async_write_ha_state()
-
-    @property
-    def brightness(self) -> int:
-        """Return the brightness of the device."""
-        return self._brightness
-
-    @property
-    def is_on(self) -> bool:
-        """Return true if light is on."""
-        return self._is_on
-
-    @property
-    def color_mode(self) -> ColorMode:
-        return ColorMode.HS
-
-    @property
-    def supported_color_modes(self) -> set:
-        """Flag supported color modes."""
-        return {COLOR_MODE_HS}
-
-    @property
-    def hs_color(self) -> tuple[int, int, int]:
-        """Return the color of the device."""
-        return color_util.color_RGB_to_hs(*self._rgb)
+    def __init__(self, entry: MrStarConfigEntry) -> None:
+        """Initialise the light."""
+        data = entry.runtime_data
+        super().__init__(data.coordinator, data.device_info, data.address)
+        self._attr_unique_id = f"{data.address}_light"
+        self._attr_is_on = False
+        self._attr_brightness = 255
+        self._attr_hs_color = (0.0, 0.0)
+        self._attr_effect = None
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Update the current value."""
-        async with self._coordinator as light:
-            if light is None:
-                self._available = False
-                return
-            if not self._is_on:
+        """Turn the garland on and apply any requested attributes."""
+        async with self.coordinator as api:
+            light = self.assert_connected(api)
+            if not self._attr_is_on:
                 await light.set_power(True)
-                self._is_on = True
+                self._attr_is_on = True
             if ATTR_BRIGHTNESS in kwargs:
-                self._brightness = kwargs[ATTR_BRIGHTNESS]
-                await light.set_brightness(float(self._brightness) / float(255))
+                brightness = int(kwargs[ATTR_BRIGHTNESS])
+                await light.set_brightness(min(brightness, 255) / 255)
+                self._attr_brightness = brightness
             if ATTR_HS_COLOR in kwargs:
-                self._rgb = color_util.color_hs_to_RGB(*kwargs[ATTR_HS_COLOR])
-                await light.set_rgb_color(self._rgb)
-            elif ATTR_EFFECT in kwargs:
-                self._attr_effect = kwargs[ATTR_EFFECT]
-                effect = EFFECTS_MAPPING[self._attr_effect]
+                hue, saturation = kwargs[ATTR_HS_COLOR]
+                await light.set_hs_color((int(round(hue)), float(saturation)))
+                self._attr_hs_color = (float(hue), float(saturation))
+            if ATTR_EFFECT in kwargs:
+                name = kwargs[ATTR_EFFECT]
+                effect = EFFECTS.get(name)
+                if effect is None:
+                    raise HomeAssistantError(f"Unknown effect: {name}")
                 await light.set_effect(effect)
+                self._attr_effect = name
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn the light off."""
-        if not self._is_on:
-            self._available = False
-            return
-        async with self._coordinator as light:
+        """Turn the garland off."""
+        async with self.coordinator as api:
+            light = self.assert_connected(api)
             await light.set_power(False)
-        self._is_on = False
+        self._attr_is_on = False
         self.async_write_ha_state()
 
     async def async_added_to_hass(self) -> None:
-        """Handle entity which will be added."""
+        """Restore the previous state and re-apply it once connected."""
         await super().async_added_to_hass()
+
         state = await self.async_get_last_state()
-        if not state:
+        if state is None:
             return
 
-        state_attributes = {}
-        if ATTR_BRIGHTNESS in state.attributes and state.attributes[ATTR_BRIGHTNESS]:
-            self._brightness = int(state.attributes[ATTR_BRIGHTNESS])
-        if ATTR_HS_COLOR in state.attributes and state.attributes[ATTR_HS_COLOR]:
-            self._rgb = color_util.color_hs_to_RGB(*state.attributes[ATTR_HS_COLOR])
-        if ATTR_EFFECT in state.attributes and state.attributes[ATTR_EFFECT]:
-            self._attr_effect = state.attributes[ATTR_EFFECT]
-        initialize: CoroutineType
+        attributes: dict[str, Any] = {}
+        if brightness := state.attributes.get(ATTR_BRIGHTNESS):
+            self._attr_brightness = int(brightness)
+            attributes[ATTR_BRIGHTNESS] = self._attr_brightness
+        if hs_color := state.attributes.get(ATTR_HS_COLOR):
+            self._attr_hs_color = (float(hs_color[0]), float(hs_color[1]))
+            attributes[ATTR_HS_COLOR] = self._attr_hs_color
+        if (effect := state.attributes.get(ATTR_EFFECT)) and effect in EFFECTS:
+            self._attr_effect = effect
+            attributes[ATTR_EFFECT] = effect
+
         if state.state == "on":
-            self._is_on = True
-            initialize = self.async_turn_on(**state_attributes)
+            self._attr_is_on = True
+            self.coordinator.run_when_connected(
+                lambda: self._async_restore_on(attributes)
+            )
         else:
-            self._is_on = False
-            initialize = self.async_turn_off()
+            self._attr_is_on = False
+            self.coordinator.run_when_connected(self.async_turn_off)
+
         self.async_write_ha_state()
-        self._coordinator.create_on_connect_task(initialize)
+
+    async def _async_restore_on(self, attributes: dict[str, Any]) -> None:
+        """Re-apply the restored on-state to the device.
+
+        The power flag is cleared first so that async_turn_on issues the
+        power command as well as the attribute commands.
+        """
+        self._attr_is_on = False
+        await self.async_turn_on(**attributes)
