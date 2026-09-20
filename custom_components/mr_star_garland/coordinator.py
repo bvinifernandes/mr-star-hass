@@ -31,6 +31,7 @@ from .const import (
     SESSION_TTL_SECONDS,
     STOP_TIMEOUT_SECONDS,
 )
+from .transport import PacedWriter
 
 
 class MrStarCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -53,6 +54,7 @@ class MrStarCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._ttl = ttl
         self._connection_timeout: float = CONNECTION_TIMEOUT_SECONDS
         self._client: BleakClientWithServiceCache | None = None
+        self._writer: PacedWriter | None = None
         self._lock = asyncio.Lock()
         self._stopping = asyncio.Event()
         self._connected = asyncio.Event()
@@ -77,10 +79,10 @@ class MrStarCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def __aenter__(self) -> MrStarAPI | None:
         """Borrow the device API, or None when there is no session."""
         await self._lock.acquire()
-        if not self.is_connected:
+        if not self.is_connected or self._writer is None:
             self.logger.debug("No session to garland %s", self._address)
             return None
-        return MrStarAPI(self._client)
+        return MrStarAPI(self._writer)
 
     async def __aexit__(self, exc_type, exc_value, traceback) -> None:
         """Return the device API."""
@@ -207,6 +209,7 @@ class MrStarCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 self._client = None
                 return False
+            self._writer = PacedWriter(self._client, self.logger)
             self._connected.set()
             self.logger.debug("Connected to garland %s", self._address)
         self._publish_state()
@@ -221,6 +224,7 @@ class MrStarCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_disconnect_locked(self) -> None:
         """Drop the session. The caller must hold the lock."""
         client, self._client = self._client, None
+        self._writer = None
         self._connected.clear()
         if client is None:
             return

@@ -1,5 +1,49 @@
 # Changelog
 
+## 2.1.0
+
+Protocol corrections taken from the vendor Android app, com.frok.mrstar 1.0.0.
+The app was decompiled and every command it sends was transcribed; the result
+is documented in PROTOCOL.md.
+
+### Fixed
+
+- Brightness at 100 percent was sent as 1024. The firmware accepts 3 to 1000,
+  which is what the app's own seekbar is capped at. Every level the
+  integration sends is now inside that range.
+- White was sent as saturation 0. The app never sends 0: it clamps the fully
+  desaturated case away and its white preset is RGB 255,254,255, which lands
+  on hue 300 with a saturation of 3. Zero saturation is now mapped to that.
+- Commands were written without response and without pacing. The app writes
+  every command with response, which Android serialises, so the next command
+  is not issued until the previous one is acknowledged. Writes now go through
+  a paced, serialised adapter with the same semantics.
+- A restored effect was re-applied on every restart even when the user had
+  never chosen one, because Home Assistant records the effect attribute
+  whether or not it is in use. The light now records which of colour or effect
+  it last drove the garland with, and restores only that.
+
+### Changed
+
+- The effect list is built from the app's own mode numbers and string
+  resources: 75 modes with their real names, up from 62. Thirteen of them,
+  modes 63 to 75, are absent from mr_star_ble's enum entirely. The six effect
+  names this integration used before are kept as aliases, so existing
+  automations and scenes keep working.
+- Colour, brightness and effect frames are now built in the integration rather
+  than through mr_star_ble, whose brightness scale and saturation handling do
+  not match the firmware. Framing still comes from the library.
+
+### Added
+
+- PROTOCOL.md, a full reference for the garland's BLE protocol: transport,
+  frame format, every command with its payload and ranges, the device's
+  notification frames, and the mode table.
+- tools/probe.py, an interactive probe that settles against a real garland
+  what static analysis cannot: whether a colour write overrides a running
+  effect, whether the write type and pacing matter, and how the firmware
+  handles out-of-range values.
+
 ## 2.0.0
 
 Compatibility and correctness release. Requires Home Assistant 2026.3 or newer.
